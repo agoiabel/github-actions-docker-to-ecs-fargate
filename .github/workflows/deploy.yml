@@ -77,18 +77,23 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
           role-duration-seconds: 3600
 
-      # Run `aws ecr get-login-password | docker login` on the runner.
-      # Subsequent docker push commands are authenticated automatically.
-      # Must happen before buildx setup so the builder daemon picks up the
-      # ECR credentials from ~/.docker/config.json at start time.
+      # Log in to ECR by writing the token directly to ~/.docker/config.json.
+      # amazon-ecr-login@v2 configures the docker-credential-ecr-login helper,
+      # which is not available inside the buildx container daemon — causing 403s
+      # on every registry operation. Piping get-login-password into docker login
+      # writes a plain base64 token that buildx can read without any helper.
       - name: Log in to Amazon ECR
         id: ecr-login
-        uses: aws-actions/amazon-ecr-login@v2
+        run: |
+          REGISTRY=$(echo "${{ secrets.ECR_REPOSITORY_URL }}" | cut -d'/' -f1)
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
+            | docker login --username AWS --password-stdin "${REGISTRY}"
+          echo "registry=${REGISTRY}" >> $GITHUB_OUTPUT
 
       # Buildx is the extended Docker builder used by docker/build-push-action.
       # It enables multi-platform builds, registry-side caching, and push in one step.
-      # Intentionally placed after ECR login so the builder container inherits
-      # the ECR auth token written to ~/.docker/config.json above.
+      # Placed after ECR login so the builder container inherits the token written
+      # to ~/.docker/config.json by the step above.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
