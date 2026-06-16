@@ -410,7 +410,7 @@ terraform workspace new dev 2>/dev/null || terraform workspace select dev
 
 terraform init \
   -backend-config="bucket=your-terraform-state-bucket" \
-  -backend-config="key=ecs-demo/terraform.tfstate" \
+  -backend-config="key=<app_name>/terraform.tfstate" \
   -backend-config="region=us-east-1" \
   -reconfigure
 
@@ -427,7 +427,7 @@ terraform workspace new staging 2>/dev/null || terraform workspace select stagin
 
 terraform init \
   -backend-config="bucket=your-terraform-state-bucket" \
-  -backend-config="key=ecs-demo/terraform.tfstate" \
+  -backend-config="key=<app_name>/terraform.tfstate" \
   -backend-config="region=us-east-1" \
   -backend-config="use_lockfile=true" \
   -reconfigure
@@ -442,7 +442,7 @@ terraform workspace new prod 2>/dev/null || terraform workspace select prod
 
 terraform init \
   -backend-config="bucket=your-terraform-state-bucket" \
-  -backend-config="key=ecs-demo/terraform.tfstate" \
+  -backend-config="key=<app_name>/terraform.tfstate" \
   -backend-config="region=us-east-1" \
   -backend-config="use_lockfile=true" \
   -reconfigure
