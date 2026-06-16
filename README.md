@@ -402,30 +402,52 @@ Repeat for `staging.tfvars` and `prod.tfvars`.
 ```bash
 cd terraform
 
-# --- dev ---
-terraform workspace new dev   # or: terraform workspace select dev
+# ── DEV — no state lock ───────────────────────────────────────────────────────
+# use_lockfile is deliberately omitted.
+# Dev is a solo environment — lock collisions only slow you down.
+
+terraform workspace new dev 2>/dev/null || terraform workspace select dev
+
 terraform init \
-  -backend-config="bucket=my-tf-state-bucket" \
-  -backend-config="key=my-app/dev/terraform.tfstate" \
-  -backend-config="region=us-east-1"
+  -backend-config="bucket=your-terraform-state-bucket" \
+  -backend-config="key=ecs-demo/terraform.tfstate" \
+  -backend-config="region=us-east-1" \
+  -reconfigure
+
+terraform plan  -var-file=envs/dev.tfvars
 terraform apply -var-file=envs/dev.tfvars
 
-# --- staging ---
-terraform workspace new staging
-terraform init -reconfigure \
-  -backend-config="bucket=my-tf-state-bucket" \
-  -backend-config="key=my-app/staging/terraform.tfstate" \
+
+# ── STAGING — native S3 lock (Terraform >= 1.10) ──────────────────────────────
+# use_lockfile=true writes a .tflock file next to the state file in S3.
+# Any concurrent apply will fail immediately rather than corrupting state.
+# No DynamoDB table required.
+
+terraform workspace new staging 2>/dev/null || terraform workspace select staging
+
+terraform init \
+  -backend-config="bucket=your-terraform-state-bucket" \
+  -backend-config="key=ecs-demo/terraform.tfstate" \
   -backend-config="region=us-east-1" \
-  -backend-config="use_lockfile=true"
+  -backend-config="use_lockfile=true" \
+  -reconfigure
+
+terraform plan  -var-file=envs/staging.tfvars
 terraform apply -var-file=envs/staging.tfvars
 
-# --- prod ---
-terraform workspace new prod
-terraform init -reconfigure \
-  -backend-config="bucket=my-tf-state-bucket" \
-  -backend-config="key=my-app/prod/terraform.tfstate" \
+
+# ── PROD — native S3 lock ─────────────────────────────────────────────────────
+
+terraform workspace new prod 2>/dev/null || terraform workspace select prod
+
+terraform init \
+  -backend-config="bucket=your-terraform-state-bucket" \
+  -backend-config="key=ecs-demo/terraform.tfstate" \
   -backend-config="region=us-east-1" \
-  -backend-config="use_lockfile=true"
+  -backend-config="use_lockfile=true" \
+  -reconfigure
+
+terraform plan  -var-file=envs/prod.tfvars
 terraform apply -var-file=envs/prod.tfvars
 ```
 
