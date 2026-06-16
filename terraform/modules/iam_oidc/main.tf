@@ -45,16 +45,14 @@ data "aws_iam_policy_document" "assume_role" {
       values   = ["sts.amazonaws.com"]
     }
 
-    # Condition 2: the token subject must match your repo and one of the
-    # three deployment branches. Any other repo or branch is denied.
+    # Condition 2: the token subject must match your repo and the specific
+    # GitHub environment. Jobs that declare `environment:` produce a sub of
+    # repo:ORG/REPO:environment:ENV_NAME — not a branch ref — so matching
+    # on branch refs silently fails when environments are used.
     condition {
-      test     = "StringLike"
+      test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values = [
-        "repo:${var.github_org}/${var.github_repo}:ref:refs/heads/main",
-        "repo:${var.github_org}/${var.github_repo}:ref:refs/heads/staging",
-        "repo:${var.github_org}/${var.github_repo}:ref:refs/heads/develop",
-      ]
+      values   = ["repo:${var.github_org}/${var.github_repo}:environment:${var.environment_name}"]
     }
   }
 }

@@ -102,37 +102,30 @@ Terraform provisions the entire AWS side: VPC, subnets, NAT gateways, ALB, ECR r
 
 ## The Dockerfile
 
-`app/Dockerfile` uses a two-stage build.
+`app/Dockerfile` is a single-stage build. If the app gains npm dependencies in the future, restore a two-stage build (deps + runtime) so that npm and its cache never make it into the final image.
 
 ```
-Stage 1 — deps (node:20-alpine)
-  COPY package.json
-  RUN npm install --omit=dev
-        │
-        │  only node_modules/
-        ▼
-Stage 2 — runtime (node:20-alpine)
-  COPY --from=deps /app/node_modules ./node_modules
-  COPY . .                    ← app source only
-  USER appuser                ← non-root
+FROM node:20-alpine
+  RUN addgroup/adduser     ← non-root
+  USER appuser
+  COPY . .                 ← app source
   EXPOSE 3000
   CMD ["node", "server.js"]
 ```
 
-**Why two stages?**  
-The `deps` stage installs packages using npm, which is not present in the final image. This eliminates npm, its cache, and any build-time tooling from the shipped image — reducing attack surface and image size.
-
 **Non-root user**  
-The runtime stage creates a dedicated `appuser`/`appgroup` and switches to it before the `CMD`. If an attacker exploits the application they land as an unprivileged user, not root.
+A dedicated `appuser`/`appgroup` is created and switched to before the `CMD`. If an attacker exploits the application they land as an unprivileged user, not root.
 
 **GIT_COMMIT build arg**  
 CI passes `--build-arg GIT_COMMIT=${{ github.sha }}` at build time. The running container exposes it in API responses and at `/health` so you can always confirm exactly which commit is deployed.
 
+**Always build locally before pushing.** Any error in `docker build` itself — a missing file, a broken `COPY`, a failed `RUN` — is fully reproducible on your machine and costs nothing to catch there. Running the build locally takes seconds and eliminates an entire class of CI failures.
+
 ```bash
-# Build locally
+# Build locally — do this before every push that touches app/ or the Dockerfile
 docker build --build-arg GIT_COMMIT=$(git rev-parse HEAD) -t ecs-demo ./app
 
-# Run locally
+# Smoke-test the image
 docker run -p 3000:3000 ecs-demo
 curl http://localhost:3000/health
 ```
@@ -481,6 +474,12 @@ git push origin main      # → deploys to prod
 
 ```
 make a code change in app/
+    │
+    ▼
+build and test the Docker image locally   ← catch build errors before CI sees them
+  docker build --build-arg GIT_COMMIT=$(git rev-parse HEAD) -t ecs-demo ./app
+  docker run -p 3000:3000 ecs-demo
+  curl http://localhost:3000/health
     │
     ▼
 push to develop

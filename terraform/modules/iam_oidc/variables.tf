@@ -18,6 +18,11 @@ variable "ecr_repository_arns" {
   type        = list(string)
 }
 
+variable "environment_name" {
+  description = "GitHub environment name — must match the environment declared in the workflow job (dev, staging, or prod)"
+  type        = string
+}
+
 variable "tags" {
   description = "Tags applied to IAM resources"
   type        = map(string)

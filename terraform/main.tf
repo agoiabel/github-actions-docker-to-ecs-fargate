@@ -75,6 +75,7 @@ module "iam_oidc" {
 
   github_org          = var.github_org
   github_repo         = var.github_repo
+  environment_name    = local.env
   role_name           = "${var.app_name}-github-actions-${local.env}"
   ecr_repository_arns = [module.ecr.repository_arn]
 
