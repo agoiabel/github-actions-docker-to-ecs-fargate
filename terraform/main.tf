@@ -20,10 +20,6 @@ terraform {
       version = "~> 5.0"
     }
   }
-
-  # Values injected at init time via -backend-config flags.
-  # See Step 3 for the exact commands.
-  backend "s3" {}
 }
 
 provider "aws" {

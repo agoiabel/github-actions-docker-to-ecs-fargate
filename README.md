@@ -17,15 +17,16 @@ Three environments (dev / staging / prod) are managed from a single Terraform co
    - [Environment differences](#environment-differences)
    - [Backend and state locking](#backend-and-state-locking)
    - [OIDC trust: keyless AWS auth](#oidc-trust-keyless-aws-auth)
-5. [GitHub Actions workflow](#github-actions-workflow)
+5. [Makefile](#makefile)
+6. [GitHub Actions workflow](#github-actions-workflow)
    - [Trigger rules](#trigger-rules)
    - [Job 1 — resolve-env](#job-1--resolve-env)
    - [Job 2 — build-and-push](#job-2--build-and-push)
    - [Job 3 — deploy](#job-3--deploy)
    - [Image tagging strategy](#image-tagging-strategy)
    - [Required secrets per GitHub environment](#required-secrets-per-github-environment)
-6. [First-time setup](#first-time-setup)
-7. [Day-to-day workflow](#day-to-day-workflow)
+7. [First-time setup](#first-time-setup)
+8. [Day-to-day workflow](#day-to-day-workflow)
 
 ---
 
@@ -68,6 +69,7 @@ Terraform provisions the entire AWS side: VPC, subnets, NAT gateways, ALB, ECR r
 
 ```
 .
+├── Makefile                # Shorthand for all Terraform commands (see §Makefile)
 ├── app/
 │   ├── Dockerfile          # Multi-stage Node.js image
 │   ├── server.js           # HTTP server with /health endpoint
@@ -251,6 +253,30 @@ The trust policy is scoped to three branches only (`main`, `staging`, `develop`)
 
 ---
 
+## Makefile
+
+A `Makefile` at the project root wraps the common Terraform commands. `ENV` defaults to `dev`; pass `ENV=staging` or `ENV=prod` to target another environment.
+
+| Target | What it does |
+|---|---|
+| `make init [ENV=…]` | Initialises the S3 backend for the chosen environment |
+| `make workspace [ENV=…]` | Creates or selects the Terraform workspace for `ENV` |
+| `make plan [ENV=…]` | Plans changes (calls `init` → `workspace` first) |
+| `make apply [ENV=…]` | Applies changes (calls `init` → `workspace` first) |
+| `make destroy [ENV=…]` | Destroys resources (calls `init` → `workspace` first) |
+| `make validate [ENV=…]` | Validates the configuration |
+| `make fmt` | Formats all `.tf` files recursively |
+
+`plan`, `apply`, `destroy`, and `validate` all call `init → workspace` automatically — you never need to run them as separate steps.
+
+```bash
+make apply              # dev (default)
+make apply ENV=staging
+make apply ENV=prod
+```
+
+---
+
 ## GitHub Actions workflow
 
 `.github/workflows/deploy.yml` — three jobs run in sequence on every push to a deployment branch.
@@ -399,63 +425,26 @@ Repeat for `staging.tfvars` and `prod.tfvars`.
 
 **2. Deploy infrastructure for each environment**
 
+The Makefile handles backend init, workspace creation/selection, and locking automatically. Dev runs without a state lock; staging and prod use `use_lockfile=true` (requires Terraform >= 1.10).
+
 ```bash
-cd terraform
+make apply ENV=dev
+make apply ENV=staging
+make apply ENV=prod
+```
 
-# ── DEV — no state lock ───────────────────────────────────────────────────────
-# use_lockfile is deliberately omitted.
-# Dev is a solo environment — lock collisions only slow you down.
+To preview changes before applying:
 
-terraform workspace new dev 2>/dev/null || terraform workspace select dev
-
-terraform init \
-  -backend-config="bucket=your-terraform-state-bucket" \
-  -backend-config="key=<app_name>/terraform.tfstate" \
-  -backend-config="region=us-east-1" \
-  -reconfigure
-
-terraform plan  -var-file=envs/dev.tfvars
-terraform apply -var-file=envs/dev.tfvars
-
-
-# ── STAGING — native S3 lock (Terraform >= 1.10) ──────────────────────────────
-# use_lockfile=true writes a .tflock file next to the state file in S3.
-# Any concurrent apply will fail immediately rather than corrupting state.
-# No DynamoDB table required.
-
-terraform workspace new staging 2>/dev/null || terraform workspace select staging
-
-terraform init \
-  -backend-config="bucket=your-terraform-state-bucket" \
-  -backend-config="key=<app_name>/terraform.tfstate" \
-  -backend-config="region=us-east-1" \
-  -backend-config="use_lockfile=true" \
-  -reconfigure
-
-terraform plan  -var-file=envs/staging.tfvars
-terraform apply -var-file=envs/staging.tfvars
-
-
-# ── PROD — native S3 lock ─────────────────────────────────────────────────────
-
-terraform workspace new prod 2>/dev/null || terraform workspace select prod
-
-terraform init \
-  -backend-config="bucket=your-terraform-state-bucket" \
-  -backend-config="key=<app_name>/terraform.tfstate" \
-  -backend-config="region=us-east-1" \
-  -backend-config="use_lockfile=true" \
-  -reconfigure
-
-terraform plan  -var-file=envs/prod.tfvars
-terraform apply -var-file=envs/prod.tfvars
+```bash
+make plan ENV=dev
+make plan ENV=staging
+make plan ENV=prod
 ```
 
 **3. Copy Terraform outputs into GitHub environment secrets**
 
 ```bash
-terraform workspace select dev
-terraform output
+terraform -chdir=terraform workspace select dev && terraform -chdir=terraform output
 ```
 
 Copy each output value into `Settings → Environments → dev → Secrets` in your GitHub repository. Repeat for staging and prod.
