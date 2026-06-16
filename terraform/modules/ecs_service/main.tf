@@ -137,7 +137,7 @@ resource "aws_ecs_task_definition" "this" {
 
 resource "aws_security_group" "tasks" {
   name        = "${var.name}-tasks-sg"
-  description = "Allow inbound from ALB only — deny all other inbound"
+  description = "Allow inbound from ALB only - deny all other inbound"
   vpc_id      = var.vpc_id
 
   ingress {
