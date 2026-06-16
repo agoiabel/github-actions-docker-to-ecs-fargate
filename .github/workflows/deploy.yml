@@ -160,6 +160,13 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
           role-duration-seconds: 3600
 
+      # Reconstruct the image URI here rather than consuming needs.build-and-push.outputs.image.
+      # GitHub Actions drops job outputs from jobs whose environment: is resolved dynamically,
+      # so we recompute using secrets and github.sha which are always available in this job.
+      - name: Get short SHA
+        id: slug
+        run: echo "sha=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
       # Download the currently live task definition JSON directly from ECS.
       # Never store task definition JSON in the repository — doing so risks
       # accidentally rolling back environment variables or other config
@@ -180,7 +187,7 @@ jobs:
         with:
           task-definition: task-definition.json
           container-name: ${{ secrets.ECS_CONTAINER_NAME }}
-          image: ${{ needs.build-and-push.outputs.image }}
+          image: ${{ secrets.ECR_REPOSITORY_URL }}:${{ needs.resolve-env.outputs.environment }}-${{ steps.slug.outputs.sha }}
 
       # Register the rendered JSON as a new task definition revision.
       # Update the ECS service to use that revision.
@@ -205,7 +212,7 @@ jobs:
           echo "| | |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
           echo "| **Environment** | \`${{ needs.resolve-env.outputs.environment }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Image** | \`${{ needs.build-and-push.outputs.image }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Image** | \`${{ secrets.ECR_REPOSITORY_URL }}:${{ needs.resolve-env.outputs.environment }}-${{ steps.slug.outputs.sha }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Cluster** | \`${{ secrets.ECS_CLUSTER }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Service** | \`${{ secrets.ECS_SERVICE }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY

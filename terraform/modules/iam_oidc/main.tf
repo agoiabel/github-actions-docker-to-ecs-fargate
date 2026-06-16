@@ -79,11 +79,21 @@ data "aws_iam_policy_document" "ecr_push" {
     sid    = "ECRPush"
     effect = "Allow"
     actions = [
+      # Write — upload layers and push manifests
       "ecr:BatchCheckLayerAvailability",
       "ecr:CompleteLayerUpload",
       "ecr:InitiateLayerUpload",
       "ecr:PutImage",
       "ecr:UploadLayerPart",
+      # Read — required by buildx for two reasons:
+      #   1. Multi-platform builds: before pushing the OCI image index, buildx
+      #      issues HEAD /v2/{repo}/manifests/{digest} for each platform manifest
+      #      to confirm it landed. ECR maps this to BatchGetImage — without it
+      #      every manifest HEAD returns 403 and the push fails.
+      #   2. Registry cache (cache-from: type=registry): pulling existing build
+      #      cache layers requires BatchGetImage + GetDownloadUrlForLayer.
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
     ]
     resources = var.ecr_repository_arns
   }
