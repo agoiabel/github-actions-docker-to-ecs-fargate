@@ -1,0 +1,26 @@
+# Dependencies (rebuilt in the deps stage)
+node_modules/
+npm-debug.log*
+
+# Environment / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Development artifacts
+*.log
+logs/
+
+# Terraform (not needed in container)
+../terraform/
+
+# CI config (not needed in container)
+../.github/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/

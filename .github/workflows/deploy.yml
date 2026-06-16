@@ -1,0 +1,202 @@
+name: Build, Push and Deploy
+
+on:
+  push:
+    branches:
+      - develop    # → dev environment
+      - staging    # → staging environment
+      - main       # → prod environment
+    paths:
+      - 'app/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+# Minimum permissions required — principle of least privilege.
+# contents: read   → checkout
+# id-token: write  → OIDC JWT minting (without this, AWS auth fails silently)
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+
+  # ── Job 1: Map the triggering branch to a GitHub environment name ──────────
+  # Centralising this in its own job means build and deploy always
+  # get the identical value — no risk of the two jobs computing different results.
+  resolve-env:
+    name: Resolve environment
+    runs-on: ubuntu-latest
+
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+
+    steps:
+      - name: Map branch to environment
+        id: set-env
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "environment=prod" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/staging" ]]; then
+            echo "environment=staging" >> $GITHUB_OUTPUT
+          else
+            echo "environment=dev" >> $GITHUB_OUTPUT
+          fi
+
+  # ── Job 2: Build the Docker image and push to ECR ─────────────────────────
+  build-and-push:
+    name: Build & Push
+    runs-on: ubuntu-latest
+    needs: resolve-env
+
+    # Declaring the environment here unlocks the environment-scoped secrets.
+    # Without this, ${{ secrets.AWS_ROLE_ARN }} and all other secrets are empty.
+    environment: ${{ needs.resolve-env.outputs.environment }}
+
+    outputs:
+      # Pass the exact image URI downstream to the deploy job.
+      # Using a job output (rather than re-computing it) guarantees
+      # the deploy job deploys the same image that was just pushed.
+      image: ${{ steps.image-uri.outputs.uri }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      # github.sha[:7] is not valid GitHub Actions expression syntax.
+      # The cut command extracts the first 7 characters in bash instead.
+      - name: Get short SHA
+        id: slug
+        run: echo "sha=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      # Buildx is the extended Docker builder used by docker/build-push-action.
+      # It enables multi-platform builds, registry-side caching, and push in one step.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Exchange the OIDC JWT for temporary AWS credentials.
+      # No long-lived access keys are stored anywhere.
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-duration-seconds: 3600
+
+      # Run `aws ecr get-login-password | docker login` on the runner.
+      # Subsequent docker push commands are authenticated automatically.
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Three tags are produced per build:
+      #
+      #   dev-a3f5c8d   ← primary: environment prefix + short SHA
+      #                    Encodes both environment and commit in one tag.
+      #                    This is what ECS is told to run.
+      #
+      #   a3f5c8d       ← bare short SHA for quick lookups
+      #
+      #   latest        ← mutable convenience tag
+      #                    Never used as the ECS image reference —
+      #                    only for human convenience (docker pull :latest).
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.ECR_REPOSITORY_URL }}
+          tags: |
+            type=raw,value=${{ needs.resolve-env.outputs.environment }}-${{ steps.slug.outputs.sha }}
+            type=raw,value=${{ steps.slug.outputs.sha }}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=ecs-demo
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Build and push Docker image
+        id: build-push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app
+          file: ./app/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+          # Registry-side layer cache — unchanged layers are not rebuilt on next push.
+          # mode=max caches all layers including intermediate build stages.
+          cache-from: type=registry,ref=${{ secrets.ECR_REPOSITORY_URL }}:buildcache
+          cache-to: type=registry,ref=${{ secrets.ECR_REPOSITORY_URL }}:buildcache,mode=max
+          platforms: linux/amd64,linux/arm64
+
+      - name: Output image URI
+        id: image-uri
+        run: |
+          echo "uri=${{ secrets.ECR_REPOSITORY_URL }}:${{ needs.resolve-env.outputs.environment }}-${{ steps.slug.outputs.sha }}" >> $GITHUB_OUTPUT
+
+  # ── Job 3: Deploy to ECS Fargate ──────────────────────────────────────────
+  deploy:
+    name: Deploy to ECS (${{ needs.resolve-env.outputs.environment }})
+    runs-on: ubuntu-latest
+    needs: [resolve-env, build-and-push]
+
+    environment: ${{ needs.resolve-env.outputs.environment }}
+
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-duration-seconds: 3600
+
+      # Download the currently live task definition JSON directly from ECS.
+      # Never store task definition JSON in the repository — doing so risks
+      # accidentally rolling back environment variables or other config
+      # that was updated outside of Terraform.
+      - name: Download current task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${{ secrets.ECS_TASK_DEFINITION }} \
+            --query taskDefinition \
+            --output json > task-definition.json
+
+      # Swap only the image field in the downloaded JSON.
+      # Every other field — environment variables, IAM roles, log config,
+      # port mappings — is left exactly as ECS last knew it.
+      - name: Render updated task definition
+        id: render-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ secrets.ECS_CONTAINER_NAME }}
+          image: ${{ needs.build-and-push.outputs.image }}
+
+      # Register the rendered JSON as a new task definition revision.
+      # Update the ECS service to use that revision.
+      # Block until:
+      #   - all new tasks pass both health checks (success), OR
+      #   - the circuit breaker detects failure and rolls back (failure)
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
+          service: ${{ secrets.ECS_SERVICE }}
+          cluster: ${{ secrets.ECS_CLUSTER }}
+          wait-for-service-stability: true
+          # 10 minutes covers: image pull + cold start + startPeriod +
+          # container health check + ALB healthy threshold + drain time
+          wait-for-minutes: 10
+
+      - name: Write job summary
+        run: |
+          echo "## Deployed to ECS Fargate ✅" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Environment** | \`${{ needs.resolve-env.outputs.environment }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Image** | \`${{ needs.build-and-push.outputs.image }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Cluster** | \`${{ secrets.ECS_CLUSTER }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Service** | \`${{ secrets.ECS_SERVICE }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
