@@ -2,6 +2,6 @@
 # Run with: terraform apply -var-file=envs/dev.tfvars
 
 aws_region  = "us-east-1"
-app_name    = "github-actions-docker-to-ecs-fargate"
+app_name    = "ecs-fargate-demo"
 github_org  = "agoiabel"    # ← replace with your GitHub username
 github_repo = "github-actions-docker-to-ecs-fargate"          # ← replace with your repository name

@@ -259,6 +259,7 @@ A `Makefile` at the project root wraps the common Terraform commands. `ENV` defa
 
 | Target | What it does |
 |---|---|
+| `make create-backend` | Creates the S3 state bucket with versioning, encryption, and public access blocked |
 | `make init [ENV=…]` | Initialises the S3 backend for the chosen environment |
 | `make workspace [ENV=…]` | Creates or selects the Terraform workspace for `ENV` |
 | `make plan [ENV=…]` | Plans changes (calls `init` → `workspace` first) |
@@ -409,9 +410,19 @@ After `terraform apply` completes, the outputs print everything you need. Copy e
 
 ## First-time setup
 
-**Prerequisites:** Terraform >= 1.10, AWS CLI, a GitHub repository, an S3 bucket for Terraform state.
+**Prerequisites:** Terraform >= 1.10, AWS CLI, a GitHub repository.
 
-**1. Edit the tfvars files**
+**1. Create the S3 state bucket**
+
+Run once, before anything else. This creates the bucket, enables versioning, blocks all public access, and enables AES256 server-side encryption.
+
+```bash
+make create-backend
+```
+
+The bucket name and region come from the `BUCKET` and `REGION` variables at the top of the `Makefile`. Change them there if you want a different name or region.
+
+**2. Edit the tfvars files**
 
 ```hcl
 # terraform/envs/dev.tfvars
@@ -423,7 +434,7 @@ github_repo = "your-repo-name"
 
 Repeat for `staging.tfvars` and `prod.tfvars`.
 
-**2. Initialise the backend for each environment**
+**3. Initialise the backend for each environment**
 
 `make init` configures the S3 backend and sets the correct locking behaviour — no lock for dev, `use_lockfile=true` for staging and prod (requires Terraform >= 1.10).
 
@@ -433,7 +444,7 @@ make init ENV=staging
 make init ENV=prod
 ```
 
-**3. Deploy infrastructure for each environment**
+**4. Deploy infrastructure for each environment**
 
 `make apply` calls `init` and `workspace` automatically, but running init explicitly first gives you a clean confirmation that the backend is wired up before you apply anything.
 
@@ -448,7 +459,7 @@ make plan  ENV=prod
 make apply ENV=prod
 ```
 
-**4. Copy Terraform outputs into GitHub environment secrets**
+**5. Copy Terraform outputs into GitHub environment secrets**
 
 ```bash
 terraform -chdir=terraform workspace select dev && terraform -chdir=terraform output
@@ -456,7 +467,7 @@ terraform -chdir=terraform workspace select dev && terraform -chdir=terraform ou
 
 Copy each output value into `Settings → Environments → dev → Secrets` in your GitHub repository. Repeat for staging and prod.
 
-**5. Push to trigger the first deployment**
+**6. Push to trigger the first deployment**
 
 ```bash
 git push origin develop   # → deploys to dev

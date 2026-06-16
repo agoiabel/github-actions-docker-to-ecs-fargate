@@ -1,4 +1,4 @@
-BUCKET   := github-actions-docker-to-ecs-fargate
+BUCKET   := agoi-ecs-demo
 REGION   := us-east-1
 ENV      ?= dev
 
@@ -19,7 +19,22 @@ BACKEND_FLAGS := \
   -backend-config="region=$(REGION)" \
   $(LOCK_FLAG)
 
-.PHONY: init workspace plan apply destroy fmt validate help
+.PHONY: init workspace plan apply destroy fmt validate create-backend help
+
+create-backend:
+	aws s3api create-bucket \
+	  --bucket $(BUCKET) \
+	  --region $(REGION)
+	aws s3api put-bucket-versioning \
+	  --bucket $(BUCKET) \
+	  --versioning-configuration Status=Enabled
+	aws s3api put-public-access-block \
+	  --bucket $(BUCKET) \
+	  --public-access-block-configuration \
+	  "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
+	aws s3api put-bucket-encryption \
+	  --bucket $(BUCKET) \
+	  --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
 
 init:
 	terraform -chdir=$(TF_DIR) init $(BACKEND_FLAGS) -reconfigure
@@ -53,4 +68,5 @@ help:
 	@echo "  apply     Apply changes for ENV"
 	@echo "  destroy   Destroy resources for ENV"
 	@echo "  fmt       Format all Terraform files"
-	@echo "  validate  Validate Terraform configuration"
+	@echo "  validate        Validate Terraform configuration"
+	@echo "  create-backend  Create and configure the S3 state bucket"

@@ -149,7 +149,7 @@ resource "aws_security_group" "tasks" {
   }
 
   egress {
-    description = "All outbound — required for ECR image pull and CloudWatch logs"
+    description = "All outbound - required for ECR image pull and CloudWatch logs"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
