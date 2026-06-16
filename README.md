@@ -423,25 +423,32 @@ github_repo = "your-repo-name"
 
 Repeat for `staging.tfvars` and `prod.tfvars`.
 
-**2. Deploy infrastructure for each environment**
+**2. Initialise the backend for each environment**
 
-The Makefile handles backend init, workspace creation/selection, and locking automatically. Dev runs without a state lock; staging and prod use `use_lockfile=true` (requires Terraform >= 1.10).
+`make init` configures the S3 backend and sets the correct locking behaviour — no lock for dev, `use_lockfile=true` for staging and prod (requires Terraform >= 1.10).
 
 ```bash
+make init ENV=dev
+make init ENV=staging
+make init ENV=prod
+```
+
+**3. Deploy infrastructure for each environment**
+
+`make apply` calls `init` and `workspace` automatically, but running init explicitly first gives you a clean confirmation that the backend is wired up before you apply anything.
+
+```bash
+make plan  ENV=dev      # preview first
 make apply ENV=dev
+
+make plan  ENV=staging
 make apply ENV=staging
+
+make plan  ENV=prod
 make apply ENV=prod
 ```
 
-To preview changes before applying:
-
-```bash
-make plan ENV=dev
-make plan ENV=staging
-make plan ENV=prod
-```
-
-**3. Copy Terraform outputs into GitHub environment secrets**
+**4. Copy Terraform outputs into GitHub environment secrets**
 
 ```bash
 terraform -chdir=terraform workspace select dev && terraform -chdir=terraform output
@@ -449,7 +456,7 @@ terraform -chdir=terraform workspace select dev && terraform -chdir=terraform ou
 
 Copy each output value into `Settings → Environments → dev → Secrets` in your GitHub repository. Repeat for staging and prod.
 
-**4. Push to trigger the first deployment**
+**5. Push to trigger the first deployment**
 
 ```bash
 git push origin develop   # → deploys to dev
